@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>打地鼠遊戲 - 線上排行榜版</title>
+
+    <!-- Firebase SDK (CDN) -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+
+    <style>
+        :root { --main-bg: #f0f2f5; --hole-color: #6d4c41; --mole-color: #ff9800; }
+        * { box-sizing: border-box; }
+        body { font-family: sans-serif; background: var(--main-bg); display: flex; flex-direction: column; align-items: center; padding: 20px; user-select: none; margin: 0; }
+
+        .name-bar { display:flex; align-items:center; gap:10px; margin-bottom:12px; flex-wrap:wrap; justify-content:center; }
+        .name-bar label { font-size:16px; font-weight:bold; color:#555; }
+        .name-bar input { padding:6px 12px; font-size:16px; border-radius:8px; border:2px solid #bbb; outline:none; width:140px; text-align:center; }
+        .name-bar input:focus { border-color:#ff9800; }
+
+        .stats { font-size:24px; margin-bottom:10px; font-weight:bold; }
+        .difficulty-bar { font-size:15px; margin-bottom:16px; color:#666; }
+        .difficulty-bar span { font-weight:bold; color:#e65100; }
+        .storage-badge { font-size:12px; margin-bottom:10px; padding:4px 12px; border-radius:20px; }
+        .storage-badge.online { background:#e8f5e9; color:#2e7d32; }
+        .storage-badge.local { background:#fff3e0; color:#e65100; }
+
+        .main-layout { display:flex; gap:24px; align-items:flex-start; flex-wrap:wrap; justify-content:center; }
+
+        .game-board {
+            display:grid; grid-template-columns:repeat(3,120px); grid-gap:15px;
+            background:#8d6e63; padding:20px; border-radius:15px; box-shadow:0 10px 20px rgba(0,0,0,0.2);
+        }
+        .hole { width:120px; height:120px; background:var(--hole-color); border-radius:50%; position:relative; overflow:hidden; border:4px solid #4e342e; }
+
+        .mole { width:80%; height:80%; background:var(--mole-color); border-radius:50% 50% 20% 20%; position:absolute; bottom:-100%; left:10%; transition:bottom 0.2s ease-out; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+        .mole.up { bottom:10%; }
+        .mole-face { position:relative; width:100%; height:100%; pointer-events:none; }
+        .mole-eyes { position:absolute; top:22%; left:50%; transform:translateX(-50%); display:flex; gap:16px; }
+        .mole-eye { width:14px; height:16px; background:white; border-radius:50%; position:relative; }
+        .mole-eye::after { content:''; position:absolute; width:7px; height:8px; background:#333; border-radius:50%; top:4px; left:4px; }
+        .mole-nose { position:absolute; top:48%; left:50%; transform:translateX(-50%); width:14px; height:10px; background:#e65100; border-radius:50%; }
+        .mole-mouth { position:absolute; top:62%; left:50%; transform:translateX(-50%); width:22px; height:8px; border-bottom:3px solid #bf360c; border-radius:0 0 50% 50%; }
+        .mole-whiskers { position:absolute; top:52%; left:50%; transform:translateX(-50%); width:70px; }
+        .mole-whiskers::before,.mole-whiskers::after { content:''; position:absolute; width:18px; height:2px; background:#5d4037; top:0; }
+        .mole-whiskers::before { left:0; transform:rotate(-8deg); }
+        .mole-whiskers::after { right:0; transform:rotate(8deg); }
+
+        .mole.hit .mole-eye::after { width:10px; height:3px; border-radius:0; top:7px; left:2px; background:#333; }
+        .mole.hit .mole-mouth { border-bottom:none; border-top:3px solid #bf360c; border-radius:50% 50% 0 0; top:65%; }
+        .mole.hit { background:#f57c00; }
+
+        .mole.boss { background:#d32f2f; box-shadow:0 0 16px 4px rgba(255,23,68,0.5),inset 0 -8px 12px rgba(0,0,0,0.2); animation:bossShake 0.15s infinite alternate; border-radius:45% 45% 20% 20%; }
+        .mole.boss .mole-horn-left,.mole.boss .mole-horn-right { display:block; }
+        .mole-horn-left,.mole-horn-right { display:none; position:absolute; top:-2px; width:0; height:0; border-left:7px solid transparent; border-right:7px solid transparent; border-bottom:18px solid #b71c1c; z-index:2; }
+        .mole-horn-left { left:12px; transform:rotate(-15deg); }
+        .mole-horn-right { right:12px; transform:rotate(15deg); }
+        .mole.boss .mole-eye { background:#ffeb3b; box-shadow:0 0 6px rgba(255,235,59,0.8); }
+        .mole.boss .mole-eye::after { background:#b71c1c; width:8px; height:10px; top:3px; left:3px; }
+        .mole.boss .mole-eyebrow-left,.mole.boss .mole-eyebrow-right { display:block; }
+        .mole-eyebrow-left,.mole-eyebrow-right { display:none; position:absolute; top:15%; width:16px; height:4px; background:#4a0000; border-radius:2px; }
+        .mole-eyebrow-left { left:18%; transform:rotate(18deg); }
+        .mole-eyebrow-right { right:18%; transform:rotate(-18deg); }
+        .mole.boss .mole-mouth { border-bottom:none; border-top:none; width:30px; height:10px; background:#4a0000; border-radius:0 0 6px 6px; top:64%; position:absolute; left:50%; transform:translateX(-50%); }
+        .mole.boss .mole-fangs { display:flex; }
+        .mole-fangs { display:none; position:absolute; top:61%; left:50%; transform:translateX(-50%); gap:14px; z-index:2; }
+        .mole-fang { width:0; height:0; border-left:4px solid transparent; border-right:4px solid transparent; border-top:8px solid white; }
+        .mole.boss .mole-nose { background:#880e4f; width:12px; height:8px; }
+        .mole.boss .mole-whiskers::before,.mole.boss .mole-whiskers::after { background:#880e4f; width:22px; height:2.5px; }
+        .mole.boss.hit { background:#e57373; box-shadow:0 0 8px 2px rgba(255,23,68,0.3); animation:none; }
+        .mole.boss.hit .mole-eye { background:white; }
+        .mole.boss.hit .mole-eye::after { width:12px; height:3px; border-radius:0; top:7px; left:1px; background:#333; }
+        .mole.boss.hit .mole-mouth { background:none; border-top:3px solid #b71c1c; border-radius:50% 50% 0 0; width:22px; height:8px; top:67%; }
+        .mole.boss.hit .mole-fangs { display:none; }
+        @keyframes bossShake { 0%{transform:translateX(-1.5px) rotate(-1deg)} 100%{transform:translateX(1.5px) rotate(1deg)} }
+
+        .game-board { cursor:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 40 40'><rect x='8' y='2' width='22' height='16' rx='3' fill='%23795548' stroke='%234e342e' stroke-width='2'/><rect x='16' y='18' width='6' height='18' rx='2' fill='%23ffcc80' stroke='%23e6a54a' stroke-width='1.5'/></svg>") 20 5, pointer; }
+        .game-board:active { cursor:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 40 40'><rect x='8' y='6' width='22' height='16' rx='3' fill='%23795548' stroke='%234e342e' stroke-width='2'/><rect x='16' y='22' width='6' height='16' rx='2' fill='%23ffcc80' stroke='%23e6a54a' stroke-width='1.5'/></svg>") 20 10, pointer; }
+
+        .score-pop { position:absolute; top:0; left:50%; transform:translateX(-50%); font-size:22px; font-weight:bold; color:#ff5722; pointer-events:none; animation:floatUp 0.7s ease-out forwards; z-index:10; text-shadow:0 1px 3px rgba(0,0,0,0.3); }
+        .score-pop.boss-pop { font-size:28px; color:#ff1744; text-shadow:0 0 10px rgba(255,23,68,0.6); }
+        @keyframes floatUp { 0%{opacity:1;top:10px} 100%{opacity:0;top:-30px} }
+
+        .level-up-flash { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); font-size:32px; font-weight:bold; color:#ff1744; text-shadow:0 2px 8px rgba(255,23,68,0.4); pointer-events:none; animation:levelPop 1.2s ease-out forwards; z-index:100; }
+        @keyframes levelPop { 0%{opacity:0;transform:translate(-50%,-50%) scale(0.5)} 15%{opacity:1;transform:translate(-50%,-50%) scale(1.2)} 50%{opacity:1;transform:translate(-50%,-50%) scale(1)} 100%{opacity:0;transform:translate(-50%,-50%) scale(1)} }
+
+        .leaderboard { background:white; border-radius:15px; box-shadow:0 6px 20px rgba(0,0,0,0.12); padding:20px; width:280px; max-height:460px; overflow-y:auto; }
+        .leaderboard h3 { margin:0 0 14px; font-size:20px; text-align:center; color:#333; }
+        .lb-loading { text-align:center; color:#999; padding:20px 0; font-size:14px; }
+        .lb-empty { text-align:center; color:#aaa; padding:20px 0; font-size:14px; }
+        .lb-row { display:flex; align-items:center; padding:8px 10px; border-radius:8px; margin-bottom:6px; gap:10px; transition:background 0.2s; }
+        .lb-row:hover { background:#fff8e1; }
+        .lb-row.gold { background:linear-gradient(135deg,#fff8e1,#ffecb3); }
+        .lb-row.silver { background:linear-gradient(135deg,#f5f5f5,#e0e0e0); }
+        .lb-row.bronze { background:linear-gradient(135deg,#fbe9e7,#ffccbc); }
+        .lb-row.me { outline:2px solid #ff9800; }
+        .lb-rank { width:28px; height:28px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:14px; flex-shrink:0; background:#eee; color:#666; }
+        .gold .lb-rank { background:#ffd600; color:#5d4037; }
+        .silver .lb-rank { background:#bdbdbd; color:#fff; }
+        .bronze .lb-rank { background:#ff8a65; color:#fff; }
+        .lb-info { flex:1; min-width:0; }
+        .lb-name { font-size:15px; font-weight:500; color:#333; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .lb-date { font-size:11px; color:#aaa; }
+        .lb-score { font-size:16px; font-weight:bold; color:#e65100; white-space:nowrap; }
+        .lb-refresh { display:block; margin:12px auto 0; padding:6px 16px; font-size:13px; border:1px solid #ddd; border-radius:6px; background:#fafafa; cursor:pointer; color:#666; transition:0.2s; }
+        .lb-refresh:hover { background:#eee; }
+
+        button.start-btn { margin-top:20px; padding:10px 25px; font-size:18px; cursor:pointer; border-radius:8px; border:none; background:#4caf50; color:white; transition:0.3s; }
+        button.start-btn:hover { background:#45a049; }
+
+        .game-over-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:200; align-items:center; justify-content:center; }
+        .game-over-overlay.show { display:flex; }
+        .game-over-box { background:white; border-radius:16px; padding:30px 36px; text-align:center; box-shadow:0 12px 40px rgba(0,0,0,0.25); animation:popIn 0.3s ease-out; }
+        @keyframes popIn { 0%{transform:scale(0.8);opacity:0} 100%{transform:scale(1);opacity:1} }
+        .game-over-box h2 { margin:0 0 6px; font-size:28px; color:#333; }
+        .game-over-box .final-score { font-size:48px; font-weight:bold; color:#ff9800; margin:8px 0; }
+        .game-over-box .save-status { font-size:14px; color:#999; margin-bottom:16px; min-height:20px; }
+        .game-over-box button { padding:10px 28px; font-size:17px; border:none; border-radius:8px; background:#4caf50; color:white; cursor:pointer; transition:0.2s; }
+        .game-over-box button:hover { background:#45a049; }
+    </style>
+</head>
+<body>
+
+    <div class="name-bar">
+        <label>玩家暱稱：</label>
+        <input type="text" id="player-name" placeholder="輸入暱稱" maxlength="12">
+    </div>
+
+    <div class="stats">
+        分數: <span id="score">0</span> | 剩餘時間: <span id="time">30</span>s
+    </div>
+    <div class="difficulty-bar">
+        同時出沒: <span id="mole-count">1</span> 隻 | 停留時間: <span id="stay-time">1.2</span>s
+    </div>
+    <div class="storage-badge" id="storage-badge"></div>
+
+    <div class="main-layout">
+        <div class="game-board" id="board"></div>
+        <div class="leaderboard">
+            <h3>🏆 排行榜 TOP 10</h3>
+            <div id="lb-body"><div class="lb-loading">載入中...</div></div>
+            <button class="lb-refresh" onclick="loadLeaderboard()">🔄 重新整理</button>
+        </div>
+    </div>
+
+    <button class="start-btn" onclick="startGame()">開始遊戲</button>
+
+    <div class="game-over-overlay" id="game-over">
+        <div class="game-over-box">
+            <h2>遊戲結束！</h2>
+            <div class="final-score" id="final-score">0</div>
+            <div class="save-status" id="save-status"></div>
+            <button onclick="closeGameOver()">再玩一次</button>
+        </div>
+    </div>
+
+    <script>
+    // =============================================================
+    //  🔥 Firebase 設定（已填入你的專案 config）
+    // =============================================================
+    const FIREBASE_CONFIG = {
+        apiKey: "AIzaSyAsumBGnMS8yZydqYuhbhlbDz1M5lOTqFc",
+        authDomain: "whack-a-mole-d61ad.firebaseapp.com",
+        databaseURL: "https://whack-a-mole-d61ad-default-rtdb.firebaseio.com",
+        projectId: "whack-a-mole-d61ad",
+        storageBucket: "whack-a-mole-d61ad.firebasestorage.app",
+        messagingSenderId: "883021878622",
+        appId: "1:883021878622:web:5e45631d716dbc1f676bcf",
+        measurementId: "G-RPEEM3NHNT"
+    };
+    // =============================================================
+
+    // ===== 初始化 Firebase =====
+    let db = null;
+    let firebaseReady = false;
+
+    try {
+        firebase.initializeApp(FIREBASE_CONFIG);
+        db = firebase.database();
+        firebaseReady = true;
+    } catch (e) {
+        console.warn('Firebase 初始化失敗:', e);
+    }
+
+    const badge = document.getElementById('storage-badge');
+    if (firebaseReady) {
+        badge.textContent = '🌐 線上共享排行榜（所有人即時同步）';
+        badge.className = 'storage-badge online';
+    } else {
+        badge.textContent = '💾 本機排行榜模式（僅限此瀏覽器）';
+        badge.className = 'storage-badge local';
+    }
+
+    // ===== 儲存層 =====
+    const STORAGE_KEY = 'whack-a-mole-leaderboard';
+
+    // --- Firebase ---
+    async function fbSave(entry) {
+        await db.ref('leaderboard').push().set(entry);
+    }
+    async function fbLoad() {
+        const snapshot = await db.ref('leaderboard')
+            .orderByChild('score')
+            .limitToLast(50)
+            .once('value');
+        const entries = [];
+        snapshot.forEach(child => entries.push(child.val()));
+        return entries;
+    }
+
+    // --- localStorage 備援 ---
+    function localSave(entry) {
+        const data = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+        data.push(entry);
+        if (data.length > 50) data.splice(0, data.length - 50);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    }
+    function localLoad() {
+        return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+    }
+
+    // --- 統一介面 ---
+    async function saveEntry(entry) {
+        try {
+            if (firebaseReady) await fbSave(entry);
+            else localSave(entry);
+            return true;
+        } catch (e) { console.error('儲存失敗:', e); return false; }
+    }
+    async function loadEntries() {
+        try {
+            if (firebaseReady) return await fbLoad();
+            else return localLoad();
+        } catch (e) { console.error('讀取失敗:', e); return []; }
+    }
+
+    // ===== 生成 9 個洞 =====
+    const board = document.getElementById('board');
+    for (let i = 0; i < 9; i++) {
+        board.innerHTML += `
+        <div class="hole">
+            <div class="mole" id="mole-${i}">
+                <div class="mole-face">
+                    <div class="mole-horn-left"></div><div class="mole-horn-right"></div>
+                    <div class="mole-eyebrow-left"></div><div class="mole-eyebrow-right"></div>
+                    <div class="mole-eyes"><div class="mole-eye"></div><div class="mole-eye"></div></div>
+                    <div class="mole-nose"></div><div class="mole-whiskers"></div>
+                    <div class="mole-fangs"><div class="mole-fang"></div><div class="mole-fang"></div></div>
+                    <div class="mole-mouth"></div>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    // ===== 遊戲邏輯 =====
+    let score=0, timeLeft=30, gameActive=false;
+    let countdownTimer=null, moleTimer=null;
+    let maxMoles=1, stayTime=1200, lastDifficultyUp=0, bossPhase=false;
+
+    function startGame() {
+        if (gameActive) return;
+        const name = document.getElementById('player-name').value.trim();
+        if (!name) { alert('請先輸入暱稱！'); document.getElementById('player-name').focus(); return; }
+
+        score=0; timeLeft=30; gameActive=true;
+        maxMoles=1; stayTime=1200; lastDifficultyUp=30; bossPhase=false;
+        document.getElementById('score').innerText = score;
+        document.getElementById('time').innerText = timeLeft;
+        updateDifficultyDisplay();
+
+        countdownTimer = setInterval(() => {
+            timeLeft--;
+            document.getElementById('time').innerText = timeLeft;
+            if (lastDifficultyUp - timeLeft >= 10) { lastDifficultyUp = timeLeft; increaseDifficulty(); }
+            if (timeLeft <= 10 && !bossPhase) { bossPhase = true; showFlash('👹 魔王鼠出沒！+10 分'); }
+            if (timeLeft <= 0) endGame();
+        }, 1000);
+        moleTimer = setInterval(() => spawnMoles(), 800);
+    }
+
+    function increaseDifficulty() {
+        maxMoles = Math.min(maxMoles + Math.floor(Math.random()*2)+1, 3);
+        stayTime = Math.max(stayTime - 100, 500);
+        updateDifficultyDisplay();
+        showFlash('⚡ 難度提升！');
+    }
+    function updateDifficultyDisplay() {
+        document.getElementById('mole-count').innerText = maxMoles;
+        document.getElementById('stay-time').innerText = (stayTime/1000).toFixed(1);
+    }
+    function showFlash(text) {
+        const f = document.createElement('div'); f.className='level-up-flash'; f.textContent=text;
+        document.body.appendChild(f); setTimeout(()=>f.remove(),1200);
+    }
+    function spawnMoles() {
+        const currentUp = document.querySelectorAll('.mole.up').length;
+        const canSpawn = maxMoles - currentUp;
+        if (canSpawn<=0) return;
+        const hidden=[];
+        for (let i=0;i<9;i++) if (!document.getElementById('mole-'+i).classList.contains('up')) hidden.push(i);
+        for (let i=hidden.length-1;i>0;i--) { const j=Math.floor(Math.random()*(i+1)); [hidden[i],hidden[j]]=[hidden[j],hidden[i]]; }
+        for (let k=0; k<Math.min(canSpawn,hidden.length); k++) showMole(hidden[k]);
+    }
+    function showMole(index) {
+        const mole = document.getElementById('mole-'+index);
+        mole.classList.remove('hit','boss');
+        if (bossPhase && Math.random()<0.4) mole.classList.add('boss');
+        mole.classList.add('up');
+        setTimeout(()=>{ mole.classList.remove('up','hit','boss'); }, stayTime);
+    }
+
+    async function endGame() {
+        gameActive=false;
+        clearInterval(countdownTimer); clearInterval(moleTimer);
+        document.querySelectorAll('.mole').forEach(m=>m.classList.remove('up','hit','boss'));
+
+        document.getElementById('final-score').innerText = score;
+        document.getElementById('save-status').innerText = '儲存成績中...';
+        document.getElementById('game-over').classList.add('show');
+
+        const name = document.getElementById('player-name').value.trim() || '匿名玩家';
+        const now = new Date();
+        const entry = {
+            name, score,
+            date: now.toLocaleDateString('zh-TW'),
+            time: now.toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'}),
+            timestamp: now.getTime()
+        };
+        const ok = await saveEntry(entry);
+        document.getElementById('save-status').innerText = ok
+            ? '✅ 成績已上傳至線上排行榜！'
+            : '⚠️ 儲存失敗';
+        await loadLeaderboard();
+    }
+    function closeGameOver() { document.getElementById('game-over').classList.remove('show'); }
+
+    // 點擊得分
+    document.querySelectorAll('.mole').forEach(mole => {
+        mole.addEventListener('click', () => {
+            if (gameActive && mole.classList.contains('up') && !mole.classList.contains('hit')) {
+                const isBoss = mole.classList.contains('boss');
+                const pts = isBoss?10:5;
+                score += pts;
+                document.getElementById('score').innerText = score;
+                mole.classList.add('hit');
+                const pop = document.createElement('div');
+                pop.className = 'score-pop'+(isBoss?' boss-pop':'');
+                pop.textContent = '+'+pts;
+                mole.parentElement.appendChild(pop);
+                setTimeout(()=>pop.remove(),700);
+                setTimeout(()=>{ mole.classList.remove('up','hit','boss'); },400);
+            }
+        });
+    });
+
+    // ===== 排行榜 =====
+    async function loadLeaderboard() {
+        const body = document.getElementById('lb-body');
+        body.innerHTML = '<div class="lb-loading">載入中...</div>';
+
+        const entries = await loadEntries();
+        if (entries.length === 0) {
+            body.innerHTML = '<div class="lb-empty">還沒有成績，快來當第一名！</div>';
+            return;
+        }
+        entries.sort((a,b) => b.score - a.score);
+        const top10 = entries.slice(0,10);
+        const currentName = document.getElementById('player-name').value.trim();
+        const medals = ['gold','silver','bronze'];
+
+        body.innerHTML = top10.map((e,i) => {
+            const medal = i<3 ? medals[i] : '';
+            const isMe = e.name===currentName ? ' me' : '';
+            return `
+            <div class="lb-row ${medal}${isMe}">
+                <div class="lb-rank">${i+1}</div>
+                <div class="lb-info">
+                    <div class="lb-name">${escHtml(e.name)}</div>
+                    <div class="lb-date">${e.date||''} ${e.time||''}</div>
+                </div>
+                <div class="lb-score">${e.score} 分</div>
+            </div>`;
+        }).join('');
+    }
+
+    function escHtml(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+
+    // 即時監聽：有人上傳新分數時自動刷新排行榜
+    if (firebaseReady) {
+        db.ref('leaderboard').on('value', () => loadLeaderboard());
+    } else {
+        loadLeaderboard();
+    }
+    </script>
+</body>
+</html>
